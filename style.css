@@ -1,0 +1,63 @@
+:root {
+  --color-bg: #F0F1E4;
+  --color-text-main: #040F16;
+  --color-text-header: #0B4F6C;
+  --color-primary: #FFFF00;
+  --wrapper-height: 87vh;
+  --image-max-width: 300px;
+  --image-margin: 3rem;
+}
+/* https://coolors.co/b80c09-f0f1e4-0b4f6c-01baef-040f16 */
+
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+
+
+
+.divider {
+  padding: 0 1rem;
+}
+
+body {
+  font-family: "Space Mono", monospace;
+  background-color: var(--color-bg);
+  font-size: 90%
+}
+
+select {
+  font-family: "Space Mono", monospace;
+  background-color: var(--color-bg)
+}
+
+.wrapper {
+  min-height: var(--wrapper-height);
+  display: grid;
+  place-items: center;
+  margin: 0 1rem;
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.title {
+  color: var(--color-text-header);
+  font-family: monospace;
+  font-style: normal;
+  font-weight: bold;
+  font-size: 50px;
+  line-height: 105%;
+  margin: 0;
+  margin-bottom:10px;
+}
+
+
+h2 {
+  color: var(--color-text-header);
+}
