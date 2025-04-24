@@ -1,15 +1,22 @@
 /**
- * Data Streamer - A utility for streaming and processing structured data files
+ * DataStreamer - A utility for streaming and processing structured data files
  */
 class DataStreamer {
   constructor(options = {}) {
     this.options = {
       firstChunkMinSize: options.firstChunkMinSize || 100,
       progressiveChunkSize: options.progressiveChunkSize || 500,
-      preCheckCache: options.preCheckCache !== undefined ? options.preCheckCache : true,
       ...options
     };
     
+    this.reset();
+  }
+
+  /**
+   * Resets internal state
+   * @private
+   */
+  reset() {
     this.data = {
       firstChunkRows: [],
       progressiveChunks: [],
@@ -19,81 +26,59 @@ class DataStreamer {
     
     this.loadStartTime = null;
     this.currentBuffer = [];
-    this.cacheStatus = null;
+    this.currentRowCount = 0;
   }
   
   /**
-   * Detect if a resource is already cached
-   * @param {string} url - URL to check
-   * @returns {Promise<boolean>} Whether the resource is cached
-   */
-  async detectCacheStatus(url) {
-    if (!this.options.preCheckCache) return false;
-    
-    try {
-      console.log('Checking if resource is cached...');
-      const headResponse = await fetch(url, {
-        method: 'HEAD',
-        cache: 'force-cache'
-      });
-      
-      const fromCache = headResponse.headers.get('x-from-cache') === 'true' || 
-                      (headResponse.headers.get('age') !== null) ||
-                      (headResponse.headers.get('cf-cache-status') === 'HIT');
-                      
-      console.log(`Cache pre-check result: ${fromCache ? 'CACHED' : 'NOT CACHED'}`);
-      return fromCache;
-    } catch (e) {
-      console.warn('Cache detection failed:', e);
-      return false;
-    }
-  }
-
-  /**
    * Starts streaming a JSONL file
-   * @param {string} url - URL to the JSONL file (compressed or uncompressed)
-   * @param {Function} onFirstChunkLoaded - Callback when first chunk is loaded
-   * @param {Function} onProgressiveChunkLoaded - Callback when a progressive chunk is loaded
-   * @param {Function} onAllDataLoaded - Callback when all data is loaded
-   * @param {Function} onError - Callback when an error occurs
-   * @param {Function} onLoadingStarted - Callback when loading starts
+   * @param {string} url - URL to the JSONL file
+   * @param {Object} callbacks - Callback functions
    * @returns {Promise} Promise that resolves when streaming is complete
    */
-  async streamJSONL(url, onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded, onError, onLoadingStarted) {
-    this.loadStartTime = +(new Date());
-    this.data = {
-      firstChunkRows: [],
-      progressiveChunks: [],
-      isFirstChunkLoaded: false,
-      totalRowCount: 0
-    };
-    
-    this.currentBuffer = [];
-    
-    // Reset cache status for this new request
-    this.cacheStatus = null;
-    
-    // Check if the resource is cached before starting the actual load process
-    if (this.options.preCheckCache) {
-      this.cacheStatus = await this.detectCacheStatus(url);
+  async streamJSONL(url, {
+    onFirstChunkLoaded = null,
+    onProgressiveChunkLoaded = null,
+    onAllDataLoaded = null,
+    onError = null,
+    onLoadingStarted = null
+  } = {}) {
+    // Support for legacy callback style
+    if (typeof arguments[1] === 'function') {
+      onFirstChunkLoaded = arguments[1];
+      onProgressiveChunkLoaded = arguments[2];
+      onAllDataLoaded = arguments[3];
+      onError = arguments[4];
+      onLoadingStarted = arguments[5];
     }
     
-    // Notify that loading has started with cache status information
-    if (onLoadingStarted) {
-      onLoadingStarted(this.cacheStatus);
-    }
+    this.reset();
+    this.loadStartTime = Date.now();
+    
+    if (onLoadingStarted) onLoadingStarted();
     
     try {
-      await this._streamAndProcess(url, onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded);
+      // Check for HEAD support to get content size if available
+      let contentLength;
+      try {
+        const headResponse = await fetch(url, { method: 'HEAD' });
+        contentLength = headResponse.headers.get('Content-Length');
+      } catch (e) {
+        // Ignore HEAD errors, we'll proceed without content length
+      }
+      
+      await this._streamAndProcess(url, {
+        onFirstChunkLoaded,
+        onProgressiveChunkLoaded,
+        onAllDataLoaded
+      }, contentLength);
+      
       return {
         totalRowCount: this.data.totalRowCount,
-        loadTime: (+(new Date()) - this.loadStartTime) / 1000
+        loadTime: (Date.now() - this.loadStartTime) / 1000
       };
     } catch (error) {
       console.error('Error loading JSONL file:', error);
-      if (onError) {
-        onError(error);
-      }
+      if (onError) onError(error);
       throw error;
     }
   }
@@ -103,10 +88,23 @@ class DataStreamer {
    * @returns {Array} All rows loaded from the JSONL file
    */
   getAllData() {
-    return [
-      ...this.data.firstChunkRows, 
-      ...this.data.progressiveChunks.flat()
-    ];
+    // Using faster array concat for large datasets
+    const allData = new Array(this.data.totalRowCount);
+    
+    let position = 0;
+    // Copy first chunk
+    for (let i = 0; i < this.data.firstChunkRows.length; i++) {
+      allData[position++] = this.data.firstChunkRows[i];
+    }
+    
+    // Copy progressive chunks
+    for (const chunk of this.data.progressiveChunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        allData[position++] = chunk[i];
+      }
+    }
+    
+    return allData;
   }
   
   /**
@@ -118,253 +116,184 @@ class DataStreamer {
   }
 
   /**
-   * Core streaming and processing implementation using a unified buffer approach
+   * Core streaming and processing implementation
    * @private
    */
-  async _streamAndProcess(url, onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded) {
-    // Use our cache detection if it hasn't been done already
-    let fromCache = this.cacheStatus;
-    
-    if (fromCache === null && this.options.preCheckCache) {
-      fromCache = await this.detectCacheStatus(url);
-      this.cacheStatus = fromCache;
-    }
-    
-    // Fetch the file, using cache if available
-    const response = await fetch(url, {
-      cache: 'force-cache' // Use cached version if available
-    });
+  async _streamAndProcess(url, { onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded }, contentLength) {
+    const response = await fetch(url, { cache: 'force-cache' });
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     
-    // Double-check cache status from the actual response if not already determined
-    if (fromCache === null || fromCache === false) {
-      const responseFromCache = response.headers.get('x-from-cache') === 'true' || 
-                              (response.headers.get('age') !== null) ||
-                              (response.headers.get('cf-cache-status') === 'HIT');
-      
-      if (responseFromCache) {
-        console.log('Cache status detected from response headers');
-        fromCache = true;
-        this.cacheStatus = true;
-      }
-    }
-    
-    console.log(`Processing file with unified buffer approach (fromCache: ${fromCache ? 'yes' : 'no'})`);
-    
-    // Initialize stream reader and decoder
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    
-    // Step 1: Stream first chunk for both cached and non-cached files
     let buffer = '';
     let firstChunkComplete = false;
     
-    // Stream until we have enough for the first chunk
-    while (!firstChunkComplete) {
+    // Pre-allocate array for better performance
+    const preAllocSize = 10000;
+    let rowBuffer = new Array(preAllocSize);
+    let rowCount = 0;
+    this.currentRowCount = 0;
+    
+    // Process stream until complete
+    let bytesReceived = 0;
+    
+    while (true) {
       const { done, value } = await reader.read();
       
       if (done) {
-        // File is smaller than first chunk size or exactly that size
-        if (buffer) {
-          this._processFirstChunkFromBuffer(buffer, onFirstChunkLoaded);
+        // Firefox requires an explicit call to decode with stream:false to flush the decoder
+        buffer += decoder.decode(new Uint8Array(0), { stream: false });
+        
+        // Force process any remaining buffer content
+        if (buffer.trim()) {
+          const remainingLines = buffer.split('\n');
+          this._processLines(remainingLines, rowBuffer, rowCount, firstChunkComplete, 
+            onFirstChunkLoaded, onProgressiveChunkLoaded);
         }
         
-        // Finalize loading since we've reached the end of the file
-        this._finalizeLoading(onFirstChunkLoaded, onAllDataLoaded);
-        return;
+        // Send any final buffered rows
+        if (this.currentBuffer.length > 0) {
+          this._sendProgressiveChunk(onProgressiveChunkLoaded);
+        }
+        
+        this._finalizeLoading({ onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded });
+        break;
       }
       
-      // Add new data to buffer
+      bytesReceived += value.length;
       buffer += decoder.decode(value, { stream: true });
       
-      // Process complete lines from the buffer
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      // Process complete lines
+      const newlineIndex = buffer.lastIndexOf('\n');
       
-      // Process lines
-      const rows = this._parseJSONLLines(lines);
-      
-      if (rows.length > 0) {
-        this.data.totalRowCount += rows.length;
-        this.data.firstChunkRows = this.data.firstChunkRows.concat(rows);
+      // If we have complete lines, process them
+      if (newlineIndex !== -1) {
+        const completeLines = buffer.substring(0, newlineIndex).split('\n');
+        buffer = buffer.substring(newlineIndex + 1);
         
-        // If we have enough for first chunk, report it and move on
-        if (!this.data.isFirstChunkLoaded && this.data.firstChunkRows.length >= this.options.firstChunkMinSize) {
-          this.data.isFirstChunkLoaded = true;
-          
-          if (onFirstChunkLoaded) {
-            const firstChunkTime = +(new Date());
-            const timeTaken = (firstChunkTime - this.loadStartTime) / 1000;
-            
-            onFirstChunkLoaded({
-              rows: this.data.firstChunkRows.slice(0, this.options.firstChunkMinSize),
-              count: this.options.firstChunkMinSize,
-              time: timeTaken
-            });
-            
-            // Keep excess rows for the next chunk
-            this.currentBuffer = this.data.firstChunkRows.slice(this.options.firstChunkMinSize);
-            
-            firstChunkComplete = true;
-            break;
-          }
-        }
-      }
-    }
-    
-    // Step 2: Handle the rest of the file based on cache status
-    if (fromCache) {
-      // For cached files: load the rest of the file at once
-      console.log('Loading rest of cached file at once');
-      
-      // Read the remaining data in one operation
-      const chunks = [];
-      
-      while (true) {
-        const { done, value } = await reader.read();
+        this._processLines(completeLines, rowBuffer, rowCount, firstChunkComplete, 
+          onFirstChunkLoaded, onProgressiveChunkLoaded);
         
-        if (done) break;
-        
-        chunks.push(value);
-      }
-      
-      // Combine chunks and process
-      const remainingData = buffer + decoder.decode(new Uint8Array(
-        chunks.reduce((acc, chunk) => {
-          const tmp = new Uint8Array(acc.length + chunk.length);
-          tmp.set(acc, 0);
-          tmp.set(chunk, acc.length);
-          return tmp;
-        }, new Uint8Array(0))
-      ));
-      
-      // Process the entire remaining file
-      const lines = remainingData.split('\n');
-      const rows = this._parseJSONLLines(lines.filter(line => line.trim() !== ''));
-      
-      if (rows.length > 0) {
-        this.data.totalRowCount += rows.length;
-        
-        // Send as a single large progressive chunk
-        if (onProgressiveChunkLoaded) {
-          const currentTime = +(new Date());
-          const timeTaken = (currentTime - this.loadStartTime) / 1000;
-          
-          onProgressiveChunkLoaded({
-            rows: [...this.currentBuffer, ...rows],
-            count: this.currentBuffer.length + rows.length,
-            totalCount: this.data.totalRowCount,
-            time: timeTaken
-          });
-        }
-      }
-      
-      // Finalize loading
-      this._finalizeLoading(onFirstChunkLoaded, onAllDataLoaded);
-      
-    } else {
-      // For non-cached files: continue streaming in progressive chunks
-      console.log('Streaming remaining data in progressive chunks');
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) {
-          // Process any remaining data in the buffer
-          if (buffer && buffer.trim() !== '') {
-            const rows = this._parseJSONLBuffer(buffer);
-            
-            if (rows.length > 0) {
-              this.data.totalRowCount += rows.length;
-              this.currentBuffer = this.currentBuffer.concat(rows);
-            }
-          }
-          
-          // Send any remaining buffered rows as a final chunk
-          if (this.currentBuffer.length > 0) {
-            if (onProgressiveChunkLoaded) {
-              const currentTime = +(new Date());
-              const timeTaken = (currentTime - this.loadStartTime) / 1000;
-              
-              onProgressiveChunkLoaded({
-                rows: this.currentBuffer,
-                count: this.currentBuffer.length,
-                totalCount: this.data.totalRowCount,
-                time: timeTaken
-              });
-              
-              this.currentBuffer = [];
-            }
-          }
-          
-          // Finalize loading
-          this._finalizeLoading(onFirstChunkLoaded, onAllDataLoaded);
-          break;
-        }
-        
-        // Add new data to buffer
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process complete lines from the buffer
+        // Update tracking variables for next iteration
+        rowCount = this.currentRowCount || 0;
+        firstChunkComplete = this.data.isFirstChunkLoaded;
+      } else if (buffer.length > 100000) {
+        // If buffer is getting too large but no newlines, try to process anyway
+        console.warn('Processing large buffer without newlines, forcing split');
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
         
-        // Process lines
-        const rows = this._parseJSONLLines(lines);
+        // Keep the last (potentially incomplete) line in the buffer
+        buffer = lines.pop() || '';
         
-        if (rows.length > 0) {
-          this.data.totalRowCount += rows.length;
-          this.currentBuffer = this.currentBuffer.concat(rows);
+        if (lines.length > 0) {
+          this._processLines(lines, rowBuffer, rowCount, firstChunkComplete,
+            onFirstChunkLoaded, onProgressiveChunkLoaded);
           
-          // If we've accumulated enough for a progressive update, send it
-          if (this.currentBuffer.length >= this.options.progressiveChunkSize) {
-            if (onProgressiveChunkLoaded) {
-              const currentTime = +(new Date());
-              const timeTaken = (currentTime - this.loadStartTime) / 1000;
-              
-              onProgressiveChunkLoaded({
-                rows: this.currentBuffer,
-                count: this.currentBuffer.length, 
-                totalCount: this.data.totalRowCount,
-                time: timeTaken
-              });
-              
-              // Reset buffer after sending
-              this.currentBuffer = [];
-            }
-          }
+          // Update tracking variables
+          rowCount = this.currentRowCount || 0;
+          firstChunkComplete = this.data.isFirstChunkLoaded;
         }
+      }
+      
+      // Process progressive chunks if we have enough data
+      if (this.currentBuffer.length >= this.options.progressiveChunkSize) {
+        this._sendProgressiveChunk(onProgressiveChunkLoaded);
       }
     }
   }
   
   /**
-   * Process first chunk from a buffer
+   * Process a batch of lines from the buffer
    * @private
    */
-  _processFirstChunkFromBuffer(buffer, onFirstChunkLoaded) {
-    if (!buffer || buffer.trim() === '') return;
+  _processLines(lines, rowBuffer, rowCount, firstChunkComplete, onFirstChunkLoaded, onProgressiveChunkLoaded) {
+    if (!lines || lines.length === 0) return;
     
-    const rows = this._parseJSONLBuffer(buffer);
-    
-    if (rows.length === 0) return;
-    
-    this.data.totalRowCount += rows.length;
-    this.data.firstChunkRows = rows;
-    this.data.isFirstChunkLoaded = true;
-    
-    if (onFirstChunkLoaded) {
-      const firstChunkTime = +(new Date());
-      const timeTaken = (firstChunkTime - this.loadStartTime) / 1000;
+    // Parse JSON lines
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
       
-      onFirstChunkLoaded({
-        rows: rows,
-        count: rows.length,
-        time: timeTaken
-      });
+      try {
+        const parsedLine = JSON.parse(line);
+        
+        // Add to row buffer
+        if (rowCount < rowBuffer.length) {
+          rowBuffer[rowCount++] = parsedLine;
+        } else {
+          // Process batch if buffer is full
+          this._processBatch(rowBuffer, rowCount, firstChunkComplete, 
+            onFirstChunkLoaded, onProgressiveChunkLoaded);
+          
+          // Create new buffer with double capacity
+          const newSize = rowBuffer.length * 2;
+          rowBuffer = new Array(newSize);
+          rowBuffer[0] = parsedLine;
+          rowCount = 1;
+          
+          // Update firstChunkComplete status
+          firstChunkComplete = this.data.isFirstChunkLoaded;
+        }
+      } catch (e) {
+        console.error('Error parsing JSON line:', line);
+      }
+    }
+    
+    // Process any remaining rows
+    if (rowCount > 0) {
+      this._processBatch(rowBuffer, rowCount, firstChunkComplete, 
+        onFirstChunkLoaded, onProgressiveChunkLoaded);
+      
+      // Store current state for next iteration
+      this.currentRowCount = 0;
+    }
+  }
+  
+  /**
+   * Process a batch of rows
+   * @private
+   */
+  _processBatch(rowBuffer, rowCount, firstChunkComplete, onFirstChunkLoaded, onProgressiveChunkLoaded) {
+    if (rowCount === 0) return;
+    
+    this.data.totalRowCount += rowCount;
+    
+    // Handle first chunk if not yet processed
+    if (!firstChunkComplete && !this.data.isFirstChunkLoaded) {
+      const rowsNeeded = this.options.firstChunkMinSize;
+      
+      // Check if we have enough for first chunk
+      if (rowCount >= rowsNeeded) {
+        // Slice array to get first chunk
+        const firstChunkRows = rowBuffer.slice(0, rowsNeeded);
+        this.data.firstChunkRows = firstChunkRows;
+        this.data.isFirstChunkLoaded = true;
+        
+        if (onFirstChunkLoaded) {
+          const timeTaken = (Date.now() - this.loadStartTime) / 1000;
+          onFirstChunkLoaded({
+            rows: firstChunkRows,
+            count: rowsNeeded,
+            time: timeTaken
+          });
+        }
+        
+        // Any remaining rows go to the progressive buffer
+        if (rowCount > rowsNeeded) {
+          this.currentBuffer = this.currentBuffer.concat(
+            rowBuffer.slice(rowsNeeded, rowCount)
+          );
+        }
+      } else {
+        // Not enough for first chunk yet, store what we have
+        this.data.firstChunkRows = rowBuffer.slice(0, rowCount);
+      }
+    } else {
+      // Already past first chunk, add to progressive buffer
+      this.currentBuffer = this.currentBuffer.concat(rowBuffer.slice(0, rowCount));
     }
   }
 
@@ -373,39 +302,36 @@ class DataStreamer {
    * @private
    */
   _sendProgressiveChunk(onProgressiveChunkLoaded) {
-    if (this.currentBuffer.length > 0 && onProgressiveChunkLoaded) {
-      const currentTime = +(new Date());
-      const timeTaken = (currentTime - this.loadStartTime) / 1000;
-      
-      // Store this chunk in our data structure
-      this.data.progressiveChunks.push([...this.currentBuffer]);
-      
-      // Notify callback
-      onProgressiveChunkLoaded({
-        rows: this.currentBuffer,
-        count: this.currentBuffer.length,
-        totalCount: this.data.totalRowCount,
-        time: timeTaken
-      });
-      
-      // Reset buffer
-      this.currentBuffer = [];
-    }
+    if (this.currentBuffer.length === 0 || !onProgressiveChunkLoaded) return;
+    
+    const timeTaken = (Date.now() - this.loadStartTime) / 1000;
+    
+    // Store this chunk in our data structure
+    this.data.progressiveChunks.push([...this.currentBuffer]);
+    
+    // Notify callback
+    onProgressiveChunkLoaded({
+      rows: this.currentBuffer,
+      count: this.currentBuffer.length,
+      totalCount: this.data.totalRowCount,
+      time: timeTaken
+    });
+    
+    // Reset buffer
+    this.currentBuffer = [];
   }
 
   /**
-   * Finalize loading by handling small file edge cases
+   * Finalize loading and trigger callbacks
    * @private
    */
-  _finalizeLoading(onFirstChunkLoaded, onAllDataLoaded) {
+  _finalizeLoading({ onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded }) {
     // If first chunk wasn't loaded yet (small file case)
     if (!this.data.isFirstChunkLoaded && this.data.firstChunkRows.length > 0) {
       this.data.isFirstChunkLoaded = true;
       
       if (onFirstChunkLoaded) {
-        const firstChunkTime = +(new Date());
-        const timeTaken = (firstChunkTime - this.loadStartTime) / 1000;
-        
+        const timeTaken = (Date.now() - this.loadStartTime) / 1000;
         onFirstChunkLoaded({
           rows: this.data.firstChunkRows,
           count: this.data.firstChunkRows.length,
@@ -414,57 +340,24 @@ class DataStreamer {
       }
     }
     
-    // Force sending any remaining buffered data
-    if (this.currentBuffer.length > 0 && this.data.isFirstChunkLoaded) {
-      this.data.progressiveChunks.push(this.currentBuffer);
+    // Double check that we've processed all data
+    if (this.currentBuffer.length > 0) {
+      if (this.data.isFirstChunkLoaded && onProgressiveChunkLoaded) {
+        this._sendProgressiveChunk(onProgressiveChunkLoaded);
+      } else {
+        this.data.progressiveChunks.push([...this.currentBuffer]);
+        this.currentBuffer = [];
+      }
     }
     
     // Notify that all data is now loaded
     if (onAllDataLoaded) {
-      const fullLoadTime = +(new Date());
-      const timeTaken = (fullLoadTime - this.loadStartTime) / 1000;
-      
+      const timeTaken = (Date.now() - this.loadStartTime) / 1000;
       onAllDataLoaded({
         rows: this.getAllData(),
         count: this.data.totalRowCount,
         time: timeTaken
       });
     }
-  }
-  
-  /**
-   * Parse JSONL buffer into array of objects
-   * @private
-   */
-  _parseJSONLBuffer(buffer) {
-    return buffer.split('\n')
-      .filter(line => line.trim() !== '')
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch (e) {
-          console.error('Error parsing JSON line:', line);
-          return null;
-        }
-      })
-      .filter(item => item !== null);
-  }
-  
-  /**
-   * Parse array of JSONL lines into array of objects
-   * @private
-   */
-  _parseJSONLLines(lines) {
-    return lines
-      .filter(line => line.trim() !== '')
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch (e) {
-          console.error('Error parsing JSON line:', line);
-          return null;
-        }
-      })
-      .filter(item => item !== null);
   }
 }
