@@ -6,7 +6,10 @@ $(document).ready(function(){
       let ts1 = +(new Date())
       console.log(`loaded in ${(ts1-ts0)/1000}s`)
     },
-    ajax: 'data/fulltext-eric-records-lite.json',
+    ajax: {
+      url: 'data/fulltext-eric-records-lite.json',
+      cache: true,
+    },
     order: {
       name:'publicationdateyear',
       dir:'desc'
