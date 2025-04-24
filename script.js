@@ -14,7 +14,7 @@ $(document).ready(function(){
       // After initialization, start the streaming load process
       const streamer = new DataStreamer({
         firstChunkMinSize: 100,
-        progressiveChunkSize: 10000
+        progressiveChunkSize: 50000,
       });
       
       streamer.streamJSONL(
