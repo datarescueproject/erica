@@ -14,11 +14,11 @@ $(document).ready(function(){
       // After initialization, start the streaming load process
       const streamer = new DataStreamer({
         firstChunkMinSize: 100,
-        progressiveChunkSize: 10000,
+        progressiveChunkSize: 50000,
       });
       
       streamer.streamJSONL(
-        'data/fulltext-eric-records-lite.jsonl.gz',
+        'data/fulltext-eric-records-lite.jsonl',
         // First chunk loaded callback
         ({rows, count, time}) => {
           console.log(`First chunk of ${count} rows loaded in ${time}s`);
@@ -27,11 +27,12 @@ $(document).ready(function(){
         // Progressive chunk loaded callback
         ({rows, count, totalCount, time}) => {
           console.log(`Progressive chunk of ${count} rows loaded (total: ${totalCount}, ${time}s)`);
-          dataTable.rows.add(rows).draw(false); // Using false to maintain current paging position
+          dataTable.rows.add(rows).draw(false);
         },
         // All data loaded callback
         ({count, time}) => {
           console.log(`Full data loaded in ${time}s, total ${count} records`);
+          dataTable.draw(false);
           loadingComplete = true;
           removeLoadingIndicator();
         },

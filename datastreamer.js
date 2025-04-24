@@ -95,28 +95,13 @@ class DataStreamer {
     }
     
     // Get a reader for the stream
-    const reader = response.body;
-    
-    // Determine if we need to decompress based on file extension or content-type
-    const isGzipped = url.toLowerCase().endsWith('.gz') || 
-                      response.headers.get('content-type')?.includes('gzip');
-    
-    // Create stream pipeline based on content type
-    let processedStream;
-    if (isGzipped) {
-      processedStream = reader.pipeThrough(new DecompressionStream('gzip'));
-    } else {
-      processedStream = reader;
-    }
-    
-    // Get a reader for the processed stream
-    const streamReader = processedStream.getReader();
+    const reader = response.body.getReader();
     
     let decoder = new TextDecoder();
     let buffer = '';
     
     while (true) {
-      const { done, value } = await streamReader.read();
+      const { done, value } = await reader.read();
       
       if (done) {
         if (buffer) {
