@@ -85,8 +85,10 @@ class DataStreamer {
    * @private
    */
   async _streamAndProcess(url, onFirstChunkLoaded, onProgressiveChunkLoaded, onAllDataLoaded) {
-    // Fetch the file as a stream
-    const response = await fetch(url);
+    // Fetch the file as a stream, using cache if available
+    const response = await fetch(url, {
+      cache: 'force-cache' // Use cached version if available
+    });
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
