@@ -53,14 +53,14 @@ $(document).ready(function(){
     columns: [
       {data:'id', name:'id', title:'id', width: '100px', render: data => {
         if(data.match(/^E[DJ][0-9]{6,7}$/)) {
-          return `<a href="https://web.archive.org/web/2/https://files.eric.ed.gov/fulltext/${data}.pdf" target="_blank">${data}</a>`;
+          return `<a href="https://web.archive.org/web/2oe_/https://files.eric.ed.gov/fulltext/${data}.pdf" target="_blank">${data}</a>`;
         } else {
           return data;
         }
       }},
       {data:'title', name:'title', title:'title'},
       {data:'author[; ]', name:'author', title:'author'},
-      {data:'publicationdateyear', name:'publicationdateyear', title:'year', width: '50px'}
+      {data:'publicationdateyear', name:'publicationdateyear', title:'year', width: '25px'}
     ],
     processing: true,
     deferRender: true, // Add this for better performance with large datasets
