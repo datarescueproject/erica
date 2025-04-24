@@ -14,7 +14,8 @@ $(document).ready(function(){
       streamJSONL('data/fulltext-eric-records-lite.jsonl.gz', 100); // Adjust chunk size as needed
     },
     order: {
-      'id': 'asc'
+      name:'id',
+      dir:'asc'
     },
     columns: [
       {data:'id', name:'id', title:'id', render: data => {
