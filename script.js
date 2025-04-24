@@ -11,7 +11,7 @@ $(document).ready(function(){
       console.log(`Initial table setup completed in ${(ts1-ts0)/1000}s`);
       
       // After initialization, start the streaming load process
-      streamJSONL('data/fulltext-eric-records-lite.jsonl', 100); // Adjust chunk size as needed
+      streamJSONL('data/fulltext-eric-records-lite.jsonl.gz', 100); // Adjust chunk size as needed
     },
     order: {
       'id': 'asc'
@@ -52,19 +52,27 @@ async function streamJSONL(url, firstChunkSize) {
     let totalRowCount = 0;
     
     // Fetch the file as a stream
-    const response = await fetch(url);
+    const response = await fetch(url.endsWith('.gz') ? url : `${url}.gz`);
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     
     // Get a reader for the stream
-    const reader = response.body.getReader();
+    const reader = response.body;
+    
+    // Create decompression stream
+    const decompressedStream = reader
+      .pipeThrough(new DecompressionStream('gzip'));
+    
+    // Get a reader for the decompressed stream
+    const decompressedReader = decompressedStream.getReader();
+    
     let decoder = new TextDecoder();
     let buffer = '';
     
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await decompressedReader.read();
       
       if (done) {
         // Process any remaining data in the buffer
@@ -117,7 +125,15 @@ async function streamJSONL(url, firstChunkSize) {
         // Parse each complete line as JSON
         const rows = lines
           .filter(line => line.trim() !== '')
-          .map(line => JSON.parse(line));
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch (e) {
+              console.error('Error parsing JSON line:', line);
+              return null;
+            }
+          })
+          .filter(item => item !== null);
         
         totalRowCount += rows.length;
         
@@ -131,14 +147,10 @@ async function streamJSONL(url, firstChunkSize) {
             const firstChunkTime = +(new Date());
             console.log(`First chunk of ${firstChunkRows.length} rows loaded in ${(firstChunkTime-loadStartTime)/1000}s`);
             isFirstChunkLoaded = true;
-            
-            // No need to update loading message, same indicator is used throughout
           }
         } else {
           // After first chunk, collect remaining rows without drawing
           remainingRows = remainingRows.concat(rows);
-          
-          // No need to update loading indicator text periodically
         }
       }
       
