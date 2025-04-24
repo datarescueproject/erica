@@ -14,7 +14,7 @@ $(document).ready(function(){
       // After initialization, start the streaming load process
       const streamer = new DataStreamer({
         firstChunkMinSize: 100,
-        progressiveChunkSize: 50000,
+        progressiveChunkSize: 10000,
       });
       
       streamer.streamJSONL(
@@ -74,7 +74,7 @@ $(document).ready(function(){
  * Shows the loading indicator in the UI
  */
 function showLoadingIndicator() {
-  loadingIndicator = $('<div class="loading-remaining">Loading more data...</div>');
+  loadingIndicator = $('<div class="loading-remaining">Loading...</div>');
   $('body').append(loadingIndicator);
 }
 
