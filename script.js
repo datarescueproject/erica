@@ -13,8 +13,9 @@ $(document).ready(function(){
       
       // After initialization, start the streaming load process
       const streamer = new DataStreamer({
-        firstChunkMinSize: 100,
-        progressiveChunkSize: 50000,
+        firstChunkMinSize: 100,       // Show first results quickly
+        progressiveChunkSize: 10000,  // Standard size for streaming chunks
+        preCheckCache: true           // Enable cache pre-check via HEAD request
       });
       
       streamer.streamJSONL(
@@ -23,11 +24,21 @@ $(document).ready(function(){
         ({rows, count, time}) => {
           console.log(`First chunk of ${count} rows loaded in ${time}s`);
           dataTable.rows.add(rows).draw();
+          
+          // Update loading indicator with initial progress
+          if (loadingIndicator) {
+            loadingIndicator.text(`Loading... ${count.toLocaleString()} records loaded`);
+          }
         },
         // Progressive chunk loaded callback
         ({rows, count, totalCount, time}) => {
           console.log(`Progressive chunk of ${count} rows loaded (total: ${totalCount}, ${time}s)`);
           dataTable.rows.add(rows).draw(false);
+          
+          // Update loading indicator with progress information
+          if (loadingIndicator) {
+            loadingIndicator.text(`Loading... ${totalCount.toLocaleString()} records loaded`);
+          }
         },
         // All data loaded callback
         ({count, time}) => {
@@ -42,8 +53,8 @@ $(document).ready(function(){
           showErrorMessage(error);
         },
         // Loading started callback
-        () => {
-          showLoadingIndicator();
+        (isCached) => {
+          showLoadingIndicator(isCached);
         }
       );
     },
@@ -73,9 +84,11 @@ $(document).ready(function(){
 
 /**
  * Shows the loading indicator in the UI
+ * @param {boolean} isCached - Whether the data is being loaded from cache
  */
-function showLoadingIndicator() {
-  loadingIndicator = $('<div class="loading-remaining">Loading...</div>');
+function showLoadingIndicator(isCached) {
+  const message = isCached ? 'Loading from cache...' : 'Loading new data...';
+  loadingIndicator = $(`<div class="loading-remaining">${message}</div>`);
   $('body').append(loadingIndicator);
 }
 
