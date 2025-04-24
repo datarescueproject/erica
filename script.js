@@ -42,7 +42,7 @@ async function streamJSONL(url, firstChunkSize) {
     const loadStartTime = +(new Date());
     
     // Show loading indicator for remaining data
-    const loadingIndicator = $('<div class="loading-remaining" style="position:fixed; bottom:10px; right:10px; padding:8px; background:rgba(0,0,0,0.7); color:white; border-radius:4px;">Loading initial data...</div>');
+    const loadingIndicator = $('<div class="loading-remaining">Loading more data...</div>');
     $('body').append(loadingIndicator);
     
     // Collections for rows
@@ -132,17 +132,13 @@ async function streamJSONL(url, firstChunkSize) {
             console.log(`First chunk of ${firstChunkRows.length} rows loaded in ${(firstChunkTime-loadStartTime)/1000}s`);
             isFirstChunkLoaded = true;
             
-            // Update loading message
-            loadingIndicator.text(`Loading remaining data…`);
+            // No need to update loading message, same indicator is used throughout
           }
         } else {
           // After first chunk, collect remaining rows without drawing
           remainingRows = remainingRows.concat(rows);
           
-          // Periodically update the loading indicator
-          if (totalRowCount % firstChunkSize === 0) {
-            loadingIndicator.text(`Loading remaining data…`);
-          }
+          // No need to update loading indicator text periodically
         }
       }
       
