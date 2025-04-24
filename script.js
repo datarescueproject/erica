@@ -51,7 +51,7 @@ $(document).ready(function(){
       dir:'asc'
     },
     columns: [
-      {data:'id', name:'id', title:'id', render: data => {
+      {data:'id', name:'id', title:'id', width: '100px', render: data => {
         if(data.match(/^E[DJ][0-9]{6,7}$/)) {
           return `<a href="https://web.archive.org/web/2/https://files.eric.ed.gov/fulltext/${data}.pdf" target="_blank">${data}</a>`;
         } else {
@@ -59,8 +59,8 @@ $(document).ready(function(){
         }
       }},
       {data:'title', name:'title', title:'title'},
-      {data:'author[</br></br>]', name:'author', title:'author'},
-      {data:'publicationdateyear', name:'publicationdateyear', title:'year'}
+      {data:'author[; ]', name:'author', title:'author'},
+      {data:'publicationdateyear', name:'publicationdateyear', title:'year', width: '50px'}
     ],
     processing: true,
     deferRender: true, // Add this for better performance with large datasets
